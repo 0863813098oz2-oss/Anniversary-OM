@@ -44,7 +44,16 @@ input[type=date]{font:inherit;color:var(--ink);background:var(--card);border:1.5
 .form{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
 .form input,.form textarea{width:100%;font:inherit;font-size:.95rem;color:var(--ink);background:var(--bg);border:1.5px solid var(--track);border-radius:12px;padding:9px 12px;resize:vertical}
 .form textarea:focus-visible{outline:3px solid var(--rose);outline-offset:2px}
-.pick img{width:100%;max-height:220px;object-fit:cover;border-radius:14px;display:block;margin-bottom:10px}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.thumbs:empty{display:none}
+.thumbs>div{position:relative;aspect-ratio:1}
+.thumbs img{width:100%;height:100%;object-fit:cover;border-radius:12px;display:block}
+.thumbs button{position:absolute;top:4px;right:4px;width:26px;height:26px;padding:0;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;border:none;font-size:16px;line-height:1}
+.gw{position:relative}
+.gal{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+.gal::-webkit-scrollbar{display:none}
+.mc .gal img{flex:0 0 100%;scroll-snap-align:start}
+.cnt{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.6);color:#fff;font-size:.8rem;padding:2px 10px;border-radius:999px}
 .tl{position:relative;padding-left:22px}
 .tl::before{content:"";position:absolute;left:5px;top:6px;bottom:0;width:2px;background:var(--track)}
 .mi{position:relative;margin-bottom:20px}
@@ -56,6 +65,13 @@ input[type=date]{font:inherit;color:var(--ink);background:var(--card);border:1.5
 .mb h3{font-size:1.05rem;margin:0 0 6px}
 .mb p{margin:0 0 12px;color:var(--mute);line-height:1.7;font-size:.95rem;white-space:pre-wrap}
 .none{color:var(--mute);text-align:center;margin:8px 0 0}
+.player{display:flex;align-items:center;gap:14px}
+#playBtn{width:48px;height:48px;padding:0;flex:none;display:flex;align-items:center;justify-content:center;background:var(--rose);border-color:var(--rose);color:#fff}
+.pinfo{flex:1;min-width:0}
+#songName{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbar{height:6px;border-radius:6px;background:var(--track);margin:10px 0 4px;cursor:pointer;position:relative}
+.pbar::after{content:"";position:absolute;inset:-10px 0}
+.pbar i{display:block;height:100%;width:0;border-radius:6px;background:var(--rose)}
 @media (prefers-reduced-motion:reduce){.p,.bar i{transition:none}}
 </style>
 </head>
@@ -76,10 +92,19 @@ input[type=date]{font:inherit;color:var(--ink);background:var(--card);border:1.5
     <small id="nextDate"></small>
     <div class="bar"><i id="bar"></i></div>
   </div>
+  <div class="card player">
+    <button id="playBtn" aria-label="เล่นหรือหยุดเพลง"></button>
+    <div class="pinfo">
+      <div id="songName"></div>
+      <div class="pbar" id="pbar"><i id="pfill"></i></div>
+      <small id="ptime"></small>
+    </div>
+    <audio id="aud" src="song.mp3" preload="none" loop></audio>
+  </div>
   <section class="album">
     <div class="ah"><h2>ความทรงจำของเรา</h2><button class="save" id="addBtn">+ เพิ่ม</button></div>
     <div class="card form" id="form" hidden>
-      <div class="pick"><img id="pv" alt="" hidden><div class="row"><button id="pickBtn">+ เลือกรูป</button><button id="rmPhoto" hidden>เอารูปออก</button></div></div>
+      <div class="pick"><div class="thumbs" id="thumbs"></div><button id="pickBtn">+ เพิ่มรูป</button></div>
       <input type="date" id="dtIn" aria-label="วันที่">
       <input id="tIn" maxlength="60" placeholder="หัวข้อ เช่น วันแรกที่ไปเที่ยวด้วยกัน">
       <textarea id="dIn" rows="4" placeholder="เล่าว่ารูปนี้ถ่ายมาได้ยังไง..."></textarea>
@@ -88,11 +113,12 @@ input[type=date]{font:inherit;color:var(--ink);background:var(--card);border:1.5
     <p class="none" id="st" hidden></p>
     <div class="tl" id="tl"></div>
     <p class="none" id="none">ยังไม่มีความทรงจำ กด + เพิ่ม เพื่อเริ่มเล่าเรื่องของเรา</p>
-    <input type="file" id="file" accept="image/*" hidden>
+    <input type="file" id="file" accept="image/*" multiple hidden>
   </section>
 </main>
 <script>
-const START="2026-08-30";
+const START="2026-08-30",MAXP=10;
+const SONG_NAME="เพลงของเรา"; // เปลี่ยนชื่อเพลงตรงนี้ ไฟล์เพลงต้องชื่อ song.mp3
 const DBURL="https://bat-neua-default-rtdb.asia-southeast1.firebasedatabase.app", ROOT="love_7a3b5a9d4a4826";
 const $=id=>document.getElementById(id);
 const nf=new Intl.NumberFormat("th-TH");
@@ -141,17 +167,17 @@ function render(){
 }
 
 
-let mem=[],tree={},editId=null,tmpPhoto="",es=null;
+let mem=[],tree={},editId=null,tmpPhotos=[],es=null;
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x)e.textContent=x;return e};
 const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
 const url=id=>DBURL+"/"+ROOT+(id?"/"+id:"")+".json";
 const status=t=>{$("st").textContent=t||"";$("st").hidden=!t};
 const fail=()=>status("บันทึกไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตหรือ Rules ใน Firebase");
-const put=async m=>{try{const r=await fetch(url(m.id),{method:"PUT",body:JSON.stringify({date:m.date,photo:m.photo,t:m.t,d:m.d})});return r.ok}catch(e){return false}};
+const put=async m=>{try{const r=await fetch(url(m.id),{method:"PUT",body:JSON.stringify({date:m.date,photos:m.photos||[],t:m.t,d:m.d})});return r.ok}catch(e){return false}};
 const del=async id=>{try{const r=await fetch(url(id),{method:"DELETE"});return r.ok}catch(e){return false}};
 
 function sync(){
-  mem=Object.entries(tree||{}).filter(([,v])=>v&&typeof v==="object").map(([id,v])=>({id,date:v.date||START,photo:v.photo||"",t:v.t||"",d:v.d||""}));
+  mem=Object.entries(tree||{}).filter(([,v])=>v&&typeof v==="object").map(([id,v])=>({id,date:v.date||START,photos:(v.photos?(Array.isArray(v.photos)?v.photos:Object.values(v.photos)):(v.photo?[v.photo]:[])).filter(Boolean),t:v.t||"",d:v.d||""}));
   renderMem();
 }
 function applyEv(path,data,merge){
@@ -182,7 +208,7 @@ async function migrate(){
     const db=await new Promise((res,rej)=>{const r=indexedDB.open("love-album",1);r.onupgradeneeded=()=>r.result.createObjectStore("m",{keyPath:"id"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej()});
     const old=await new Promise((res,rej)=>{const t=db.transaction("m","readonly");const q=t.objectStore("m").getAll();t.oncomplete=()=>res(q.result);t.onerror=()=>rej()});
     if(!old.length)return;
-    for(const m of old){if(!await put({...m,id:String(m.id)}))return}
+    for(const m of old){if(!await put({...m,id:String(m.id),photos:m.photo?[m.photo]:[]}))return}
     db.transaction("m","readwrite").objectStore("m").clear();
   }catch(e){}
 }
@@ -194,7 +220,13 @@ function renderMem(){
     const it=el("article","mi");
     it.append(el("div","md",fmt(parse(m.date))));
     const c=el("div","card mc");
-    if(m.photo){const im=el("img");im.src=m.photo;im.alt=m.t||"รูปของเรา";c.append(im)}
+    if(m.photos.length){
+      const gw=el("div","gw"),g=el("div","gal");
+      m.photos.forEach(u=>{const im=el("img");im.src=u;im.alt=m.t||"รูปของเรา";im.loading="lazy";g.append(im)});
+      gw.append(g);
+      if(m.photos.length>1){const n=el("div","cnt","1/"+m.photos.length);g.onscroll=()=>{n.textContent=(Math.round(g.scrollLeft/g.clientWidth)+1)+"/"+m.photos.length};gw.append(n)}
+      c.append(gw);
+    }
     const b=el("div","mb");
     if(m.t)b.append(el("h3","",m.t));
     if(m.d)b.append(el("p","",m.d));
@@ -210,11 +242,12 @@ function renderMem(){
 }
 
 function showPv(){
-  $("pv").hidden=!tmpPhoto;if(tmpPhoto)$("pv").src=tmpPhoto;
-  $("rmPhoto").hidden=!tmpPhoto;$("pickBtn").textContent=tmpPhoto?"เปลี่ยนรูป":"+ เลือกรูป";
+  const t=$("thumbs");t.textContent="";
+  tmpPhotos.forEach((u,i)=>{const w=el("div"),im=el("img"),x=el("button","","×");im.src=u;im.alt="";x.setAttribute("aria-label","เอารูปออก");x.onclick=()=>{tmpPhotos.splice(i,1);showPv()};w.append(im,x);t.append(w)});
+  $("pickBtn").textContent=tmpPhotos.length?"+ เพิ่มรูปอีก":"+ เพิ่มรูป";
 }
 function openForm(m){
-  editId=m?m.id:null;tmpPhoto=m?m.photo:"";
+  editId=m?m.id:null;tmpPhotos=m?[...m.photos]:[];
   $("dtIn").value=m?m.date:today();$("tIn").value=m?m.t:"";$("dIn").value=m?m.d:"";
   showPv();$("form").hidden=false;$("addBtn").hidden=true;
   $("form").scrollIntoView({block:"nearest"});
@@ -223,16 +256,14 @@ function closeForm(){$("form").hidden=true;$("addBtn").hidden=false}
 $("addBtn").onclick=()=>openForm(null);
 $("cancelBtn").onclick=closeForm;
 $("pickBtn").onclick=()=>$("file").click();
-$("rmPhoto").onclick=()=>{tmpPhoto="";showPv()};
 $("saveBtn").onclick=async()=>{
   const t=$("tIn").value.trim(),d=$("dIn").value.trim();
-  if(!tmpPhoto&&!t&&!d){$("tIn").focus();return}
-  const m={id:editId||String(Date.now()),date:$("dtIn").value||today(),photo:tmpPhoto,t,d};
-  tree=tree||{};tree[m.id]={date:m.date,photo:m.photo,t:m.t,d:m.d};sync();closeForm();
+  if(!tmpPhotos.length&&!t&&!d){$("tIn").focus();return}
+  const m={id:editId||String(Date.now()),date:$("dtIn").value||today(),photos:[...tmpPhotos],t,d};
+  tree=tree||{};tree[m.id]={date:m.date,photos:m.photos,t:m.t,d:m.d};sync();closeForm();
   if(!await put(m))fail();
 };
-$("file").onchange=e=>{
-  const f=e.target.files[0];if(!f)return;
+const shrink=f=>new Promise((res,rej)=>{
   const r=new FileReader();
   r.onload=()=>{
     const im=new Image();
@@ -240,12 +271,33 @@ $("file").onchange=e=>{
       const k=Math.min(1,900/Math.max(im.width,im.height));
       const c=document.createElement("canvas");c.width=im.width*k;c.height=im.height*k;
       c.getContext("2d").drawImage(im,0,0,c.width,c.height);
-      tmpPhoto=c.toDataURL("image/jpeg",.7);showPv();
+      res(c.toDataURL("image/jpeg",.7));
     };
-    im.src=r.result;
+    im.onerror=rej;im.src=r.result;
   };
-  r.readAsDataURL(f);e.target.value="";
+  r.onerror=rej;r.readAsDataURL(f);
+});
+$("file").onchange=async e=>{
+  const files=[...e.target.files];e.target.value="";
+  for(const f of files){
+    if(tmpPhotos.length>=MAXP){status("ใส่ได้สูงสุด "+MAXP+" รูปต่อหนึ่งความทรงจำ");break}
+    try{tmpPhotos.push(await shrink(f))}catch(err){}
+    showPv();
+  }
 };
+
+const aud=$("aud"),pb=$("playBtn");
+const svg=d=>'<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="'+d+'"/></svg>';
+const I_PLAY=svg("M8 5v14l11-7z"),I_PAUSE=svg("M6 5h4v14H6zM14 5h4v14h-4z");
+const mmss=t=>isFinite(t)?Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0"):"0:00";
+$("songName").textContent=SONG_NAME;pb.innerHTML=I_PLAY;
+pb.onclick=()=>{aud.paused?aud.play().catch(()=>{$("ptime").textContent="เล่นไม่ได้ ตรวจสอบไฟล์ song.mp3"}):aud.pause()};
+aud.onplay=()=>{pb.innerHTML=I_PAUSE};
+aud.onpause=()=>{pb.innerHTML=I_PLAY};
+const tick=()=>{if(aud.duration){$("pfill").style.width=(aud.currentTime/aud.duration*100)+"%";$("ptime").textContent=mmss(aud.currentTime)+" / "+mmss(aud.duration)}};
+aud.ontimeupdate=tick;aud.onloadedmetadata=tick;
+aud.onerror=()=>{$("ptime").textContent="ไม่พบไฟล์ song.mp3 ในโฟลเดอร์เดียวกับ index.html"};
+$("pbar").onclick=e=>{if(!aud.duration)return;const r=$("pbar").getBoundingClientRect();aud.currentTime=aud.duration*Math.min(1,Math.max(0,(e.clientX-r.left)/r.width))};
 render();
 connect();migrate();
 setInterval(()=>{const s=Math.floor((new Date()-parse(startStr))/1000);if(s>=0)$("sec").textContent="หรือ "+nf.format(s)+" วินาที"},1000);
