@@ -85,13 +85,15 @@ input[type=date]{font:inherit;color:var(--ink);background:var(--card);border:1.5
       <textarea id="dIn" rows="4" placeholder="เล่าว่ารูปนี้ถ่ายมาได้ยังไง..."></textarea>
       <div class="row"><button class="save" id="saveBtn">บันทึก</button><button id="cancelBtn">ยกเลิก</button></div>
     </div>
+    <p class="none" id="st" hidden></p>
     <div class="tl" id="tl"></div>
     <p class="none" id="none">ยังไม่มีความทรงจำ กด + เพิ่ม เพื่อเริ่มเล่าเรื่องของเรา</p>
     <input type="file" id="file" accept="image/*" hidden>
   </section>
 </main>
 <script>
-const PKEY="love-photo", CKEY="love-caption", START="2026-08-30";
+const START="2026-08-30";
+const DBURL="https://bat-neua-default-rtdb.asia-southeast1.firebasedatabase.app", ROOT="love_7a3b5a9d4a4826";
 const $=id=>document.getElementById(id);
 const nf=new Intl.NumberFormat("th-TH");
 const fmt=d=>d.toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"});
@@ -139,24 +141,50 @@ function render(){
 }
 
 
-let db=null,mem=[],editId=null,tmpPhoto="";
+let mem=[],tree={},editId=null,tmpPhoto="",es=null;
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x)e.textContent=x;return e};
 const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
-const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open("love-album",1);r.onupgradeneeded=()=>r.result.createObjectStore("m",{keyPath:"id"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
-const tx=(mode,fn)=>new Promise((res,rej)=>{const t=db.transaction("m",mode);const q=fn(t.objectStore("m"));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error)});
-const put=async m=>{if(db)try{await tx("readwrite",s=>s.put(m))}catch(e){}};
-const del=async id=>{if(db)try{await tx("readwrite",s=>s.delete(id))}catch(e){}};
+const url=id=>DBURL+"/"+ROOT+(id?"/"+id:"")+".json";
+const status=t=>{$("st").textContent=t||"";$("st").hidden=!t};
+const fail=()=>status("บันทึกไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตหรือ Rules ใน Firebase");
+const put=async m=>{try{const r=await fetch(url(m.id),{method:"PUT",body:JSON.stringify({date:m.date,photo:m.photo,t:m.t,d:m.d})});return r.ok}catch(e){return false}};
+const del=async id=>{try{const r=await fetch(url(id),{method:"DELETE"});return r.ok}catch(e){return false}};
 
-async function load(){
-  try{db=await openDB();mem=(await tx("readonly",s=>s.getAll()))||[]}catch(e){db=null;mem=[]}
-  try{
-    const ph=localStorage.getItem(PKEY),c=localStorage.getItem(CKEY);
-    if(db&&(ph||c)){
-      if(!mem.length){const cp=c?JSON.parse(c):{};const m={id:Date.now(),date:START,photo:ph||"",t:cp.t||"",d:cp.d||""};mem.push(m);await put(m)}
-      localStorage.removeItem(PKEY);localStorage.removeItem(CKEY);
-    }
-  }catch(e){}
+function sync(){
+  mem=Object.entries(tree||{}).filter(([,v])=>v&&typeof v==="object").map(([id,v])=>({id,date:v.date||START,photo:v.photo||"",t:v.t||"",d:v.d||""}));
   renderMem();
+}
+function applyEv(path,data,merge){
+  const parts=path.split("/").filter(Boolean);
+  if(!parts.length){
+    if(merge){tree=tree||{};Object.keys(data||{}).forEach(k=>{data[k]===null?delete tree[k]:tree[k]=data[k]})}
+    else tree=data||{};
+    return;
+  }
+  tree=tree||{};let o=tree;
+  for(let i=0;i<parts.length-1;i++){if(!o[parts[i]]||typeof o[parts[i]]!=="object")o[parts[i]]={};o=o[parts[i]]}
+  const k=parts[parts.length-1];
+  if(merge){o[k]=o[k]||{};Object.keys(data||{}).forEach(x=>{data[x]===null?delete o[k][x]:o[k][x]=data[x]})}
+  else if(data===null)delete o[k];else o[k]=data;
+}
+function connect(){
+  if(es)es.close();
+  es=new EventSource(url());
+  const on=(ev,merge)=>es.addEventListener(ev,e=>{try{const x=JSON.parse(e.data);applyEv(x.path,x.data,merge);sync();status("")}catch(err){}});
+  on("put",false);on("patch",true);
+  es.addEventListener("cancel",()=>status("ไม่มีสิทธิ์อ่านข้อมูล ตรวจสอบ Rules ใน Firebase"));
+  es.onerror=()=>{status("กำลังเชื่อมต่อใหม่...");if(es.readyState===2)setTimeout(connect,8000)};
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&(!es||es.readyState===2))connect()});
+
+async function migrate(){
+  try{
+    const db=await new Promise((res,rej)=>{const r=indexedDB.open("love-album",1);r.onupgradeneeded=()=>r.result.createObjectStore("m",{keyPath:"id"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej()});
+    const old=await new Promise((res,rej)=>{const t=db.transaction("m","readonly");const q=t.objectStore("m").getAll();t.oncomplete=()=>res(q.result);t.onerror=()=>rej()});
+    if(!old.length)return;
+    for(const m of old){if(!await put({...m,id:String(m.id)}))return}
+    db.transaction("m","readwrite").objectStore("m").clear();
+  }catch(e){}
 }
 
 function renderMem(){
@@ -175,7 +203,7 @@ function renderMem(){
     const x=el("button","","ลบ");let armed=false;
     x.onclick=async()=>{
       if(!armed){armed=true;x.textContent="กดอีกครั้งเพื่อลบ";setTimeout(()=>{armed=false;x.textContent="ลบ"},3000);return}
-      mem=mem.filter(y=>y.id!==m.id);await del(m.id);renderMem();
+      delete tree[m.id];sync();if(!await del(m.id))fail();
     };
     r.append(e,x);b.append(r);c.append(b);it.append(c);tl.append(it);
   });
@@ -199,9 +227,9 @@ $("rmPhoto").onclick=()=>{tmpPhoto="";showPv()};
 $("saveBtn").onclick=async()=>{
   const t=$("tIn").value.trim(),d=$("dIn").value.trim();
   if(!tmpPhoto&&!t&&!d){$("tIn").focus();return}
-  const m={id:editId||Date.now(),date:$("dtIn").value||today(),photo:tmpPhoto,t,d};
-  const i=mem.findIndex(x=>x.id===m.id);if(i>=0)mem[i]=m;else mem.push(m);
-  await put(m);closeForm();renderMem();
+  const m={id:editId||String(Date.now()),date:$("dtIn").value||today(),photo:tmpPhoto,t,d};
+  tree=tree||{};tree[m.id]={date:m.date,photo:m.photo,t:m.t,d:m.d};sync();closeForm();
+  if(!await put(m))fail();
 };
 $("file").onchange=e=>{
   const f=e.target.files[0];if(!f)return;
@@ -209,17 +237,17 @@ $("file").onchange=e=>{
   r.onload=()=>{
     const im=new Image();
     im.onload=()=>{
-      const k=Math.min(1,1000/Math.max(im.width,im.height));
+      const k=Math.min(1,900/Math.max(im.width,im.height));
       const c=document.createElement("canvas");c.width=im.width*k;c.height=im.height*k;
       c.getContext("2d").drawImage(im,0,0,c.width,c.height);
-      tmpPhoto=c.toDataURL("image/jpeg",.8);showPv();
+      tmpPhoto=c.toDataURL("image/jpeg",.7);showPv();
     };
     im.src=r.result;
   };
   r.readAsDataURL(f);e.target.value="";
 };
 render();
-load();
+connect();migrate();
 setInterval(()=>{const s=Math.floor((new Date()-parse(startStr))/1000);if(s>=0)$("sec").textContent="หรือ "+nf.format(s)+" วินาที"},1000);
 </script>
 </body>
