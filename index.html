@@ -147,7 +147,7 @@ function render(){
     $("next").innerHTML="ยังไม่ถึงวันเริ่มคบ";$("nextDate").textContent="";
     return;
   }
-  document.querySelector("h1").textContent="เราคบกันมาแล้ว";
+  document.querySelector("h1").textContent="ความทรงจำ";
   $("days").textContent=nf.format(days);
   const [y,m,d]=ymd(start,now);
   $("ymd").textContent=[y&&y+" ปี",m&&m+" เดือน",d&&d+" วัน"].filter(Boolean).join(" ")||"วันแรกของเรา";
